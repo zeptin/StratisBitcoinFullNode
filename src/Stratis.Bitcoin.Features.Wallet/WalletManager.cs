@@ -8,10 +8,12 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using Stratis.Bitcoin.Configuration;
+using Stratis.Bitcoin.Controllers.Models;
 using Stratis.Bitcoin.Features.Wallet.Broadcasting;
 using Stratis.Bitcoin.Features.Wallet.Interfaces;
 using Stratis.Bitcoin.Interfaces;
 using Stratis.Bitcoin.Utilities;
+using Script = NBitcoin.Script;
 
 [assembly: InternalsVisibleTo("Stratis.Bitcoin.Features.Wallet.Tests")]
 
@@ -1538,6 +1540,11 @@ namespace Stratis.Bitcoin.Features.Wallet
                     }
                 },
                 TimeSpans.FiveSeconds);
+        }
+
+        public TransactionVerboseModel DecodeRawTransaction(string rawHex)
+        {
+            return new TransactionVerboseModel(this.network.CreateTransaction(rawHex), this.network);
         }
     }
 }

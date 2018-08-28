@@ -1123,5 +1123,22 @@ namespace Stratis.Bitcoin.Features.Wallet.Controllers
                 this.walletSyncManager.SyncFromHeight(blockHeightToSyncFrom);
             }
         }
+
+        /// <summary>
+        /// Return the JSON representation for a given transaction in hex format.
+        /// </summary>
+        /// <param name="rawHex">The raw hexadecimal form of the transaction.</param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("decoderawtransaction")]
+        public IActionResult DecodeRawTransaction([FromBody] DecodeRawTransactionModel request)
+        {
+            if (!this.ModelState.IsValid)
+            {
+                return ModelStateErrors.BuildErrorResponse(this.ModelState);
+            }
+
+            return this.Json(this.walletManager.DecodeRawTransaction(request.RawHex));
+        }
     }
 }

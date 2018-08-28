@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using NBitcoin;
+using Stratis.Bitcoin.Controllers.Models;
 
 namespace Stratis.Bitcoin.Features.Wallet.Interfaces
 {
@@ -296,5 +297,12 @@ namespace Stratis.Bitcoin.Features.Wallet.Interfaces
         /// <param name="walletName">The name of the wallet to remove transactions from.</param>
         /// <returns>A list of objects made up of a transactions ID along with the time at which they were created.</returns>
         HashSet<(uint256, DateTimeOffset)> RemoveAllTransactions(string walletName);
+
+        /// <summary>
+        /// Converts a transaction in raw hex format into a Transaction object, suitable for conversion to JSON etc.
+        /// </summary>
+        /// <param name="rawHex">The raw hexadecimal transaction representation.</param>
+        /// <returns>A <see cref="Transaction" /> object</returns>
+        TransactionVerboseModel DecodeRawTransaction(string rawHex);
     }
 }
