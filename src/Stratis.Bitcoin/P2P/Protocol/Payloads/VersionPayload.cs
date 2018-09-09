@@ -13,9 +13,8 @@ namespace Stratis.Bitcoin.P2P.Protocol.Payloads
         Nothing = 0,
 
         /// <summary>
-        /// NODE_NETWORK means that the node is capable of serving the block chain. It is currently
-        /// set by all Bitcoin Core nodes, and is unset by SPV clients or other peers that just want
-        /// network services but don't provide them.
+        /// NODE_NETWORK means that the node is capable of serving the complete block chain.
+        /// It is currently set by all Bitcoin Core non pruned nodes, and is unset by SPV clients or other light clients.
         /// </summary>
         Network = (1 << 0),
 
@@ -24,7 +23,7 @@ namespace Stratis.Bitcoin.P2P.Protocol.Payloads
         /// Bitcoin Core does not support this but a patch set called Bitcoin XT does.
         /// See BIP 64 for details on how this is implemented.
         /// </summary>
-        GetUTXO = (1 << 1),
+        NODE_GETUTXO = (1 << 1),
 
         /// <summary> NODE_BLOOM means the node is capable and willing to handle bloom-filtered connections.
         /// Bitcoin Core nodes used to support this by default, without advertising this bit,
@@ -36,6 +35,22 @@ namespace Stratis.Bitcoin.P2P.Protocol.Payloads
         /// witness data.
         /// </summary>
         NODE_WITNESS = (1 << 3),
+
+        /// <summary>
+        /// NODE_XTHIN means the node supports Xtreme Thinblocks.
+        /// If this is turned off then the node will not service nor make xthin requests.
+        /// </summary>
+        NODE_XTHIN = (1 << 4),
+
+        /// <summary>
+        /// NODE_NETWORK_LIMITED means the same as NODE_NETWORK with the limitation of only
+        /// serving the last 288 (2 day) blocks.
+        /// See BIP159 for details on how this is implemented.
+        /// </summary>
+        NODE_NETWORK_LIMITED = (1 << 10),
+
+        // Bits 24-31 are reserved for temporary experiments.
+        // Other service bits should be allocated via the BIP process.
     }
 
     [Payload("version")]
