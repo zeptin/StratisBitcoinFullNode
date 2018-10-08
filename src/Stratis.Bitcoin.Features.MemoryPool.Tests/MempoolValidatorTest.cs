@@ -472,10 +472,29 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute cases in PreMempoolChecks CheckFinalTransaction
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxAlreadyExists_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxAlreadyExists_ReturnsFalseAsync()
         {
-            // TODO: Execute this case this.memPool.Exists(context.TransactionHash)
+            string dataDir = GetTestDirectoryPath(this);
+
+            var minerSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            ITestChainContext context = await TestChainFactory.CreateAsync(KnownNetworks.RegTest, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
+            tx.Sign(KnownNetworks.RegTest, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.True(isSuccess, "Transaction should have been accepted but was not.");
+
+            // This tests the method this.memPool.Exists(context.TransactionHash)
+            isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction should not have been accepted a second time to the mempool.");
         }
 
         [Fact(Skip = "Not implemented yet.")]
@@ -484,10 +503,29 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute this case CheckMempoolCoinView context.View.HaveCoins(context.TransactionHash)
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxMissingInputs_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxMissingInputs_ReturnsFalseAsync()
         {
-            // TODO: Execute this case CheckMempoolCoinView !context.View.HaveCoins(txin.PrevOut.Hash)
+            string dataDir = GetTestDirectoryPath(this);
+
+            var minerSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            ITestChainContext context = await TestChainFactory.CreateAsync(KnownNetworks.RegTest, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            var tx = new Transaction();
+
+            // Nonexistent input.
+            tx.AddInput(new TxIn(new OutPoint(new uint256(57), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
+            tx.Sign(KnownNetworks.RegTest, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // CheckMempoolCoinView !context.View.HaveCoins(txin.PrevOut.Hash)
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with invalid input should not have been accepted.");
         }
 
         [Fact(Skip = "Not implemented yet.")]
