@@ -498,11 +498,45 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.Equal(MempoolErrors.Coinstake, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsNonStandardVersionUnsupported_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsNonStandardVersionUnsupported_ReturnsFalseAsync()
         {
-            // TODO:Test the cases in PreMempoolChecks CheckStandardTransaction
-            // - Check version number
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.Satoshis(1)), destSecret.PubKeyHash));
+            tx.Version = 0;
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the version number case in PreMempoolChecks CheckStandardTransaction (version too low)
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with version too low should not have been accepted.");
+            Assert.Equal(MempoolErrors.Version, state.Error);
+
+            // Can't reuse previous transaction with bumped version due to signing process having side effects.
+            tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.Satoshis(1)), destSecret.PubKeyHash));
+            tx.Version = (uint)validator.ConsensusOptions.MaxStandardVersion + 1;
+            tx.Sign(network, minerSecret, false);
+
+            state = new MempoolValidationState(false);
+
+            // Tests the version number case in PreMempoolChecks CheckStandardTransaction (version too high)
+            isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with version too high should not have been accepted.");
+            Assert.Equal(MempoolErrors.Version, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
@@ -595,6 +629,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // This tests the method this.memPool.Exists(context.TransactionHash)
             isSuccess = await validator.AcceptToMemoryPool(state, tx);
             Assert.False(isSuccess, "Transaction should not have been accepted a second time to the mempool.");
+            Assert.Equal(MempoolErrors.InPool, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
