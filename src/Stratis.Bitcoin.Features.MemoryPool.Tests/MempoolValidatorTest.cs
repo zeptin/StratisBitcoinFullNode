@@ -427,7 +427,8 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // Create a transaction that looks like a coinbase.
             tx.AddInput(new TxIn(new OutPoint(new uint256(0), uint.MaxValue), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
             tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
-            
+            Assert.True(tx.IsCoinBase);
+
             // It is not necessary to sign the transaction as we want the scriptSig left untouched and (2 < size < 100) bytes to pass the coinbase size check.
             var state = new MempoolValidationState(false);
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
@@ -453,9 +454,11 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // Create a transaction that looks like a coinbase. But the consensus rules that apply to coinbases will reject it anyway.
             // We need two forms of the test because submitting an incorrectly constructed coinbase triggers a consensus rule instead
             // of the coinbase being rejected by the mempool for being a coinbase.
+            // TODO: Instead of creating multiple versions of all such tests we should perhaps find a way of testing the applicable rules in the mempool simultaneously.
             tx.AddInput(new TxIn(new OutPoint(new uint256(0), uint.MaxValue), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
             tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
             tx.Sign(KnownNetworks.RegTest, minerSecret, false);
+            Assert.True(tx.IsCoinBase);
 
             var state = new MempoolValidationState(false);
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
@@ -485,6 +488,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             });
             tx.AddOutput(new TxOut(Money.Zero, (IDestination)null));
             tx.AddOutput(new TxOut(Money.Zero, (IDestination)null));
+            Assert.True(tx.IsCoinStake);
 
             var state = new MempoolValidationState(false);
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
@@ -529,11 +533,30 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // - Check output scripttemplate == null
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsNonStandardOutputIsDust_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsNonStandardOutputIsDust_ReturnsFalseAsync()
         {
-            // TODO:Test the cases in PreMempoolChecks CheckStandardTransaction
-            // - Check output dust
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.Satoshis(1)), destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the dust output case in PreMempoolChecks CheckStandardTransaction
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with dust output should not have been accepted.");
+            Assert.Equal(MempoolErrors.Dust, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
