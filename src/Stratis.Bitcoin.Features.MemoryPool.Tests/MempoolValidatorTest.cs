@@ -411,10 +411,87 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.True(await validator.AcceptToMemoryPool(state, p2shOverp2wpkh), $"Transaction: {nameof(p2shOverp2wpkh)} failed mempool validation.");
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsCoinbase_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsCoinbase_ReturnsFalseAsync()
         {
-            // TODO: Execute this case PreMempoolChecks context.Transaction.IsCoinBase
+            string dataDir = GetTestDirectoryPath(this);
+
+            var minerSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            ITestChainContext context = await TestChainFactory.CreateAsync(KnownNetworks.RegTest, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            var tx = new Transaction();
+
+            // Create a transaction that looks like a coinbase.
+            tx.AddInput(new TxIn(new OutPoint(new uint256(0), uint.MaxValue), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
+            
+            // It is not necessary to sign the transaction as we want the scriptSig left untouched and (2 < size < 100) bytes to pass the coinbase size check.
+            var state = new MempoolValidationState(false);
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+
+            // Tests PreMempoolChecks context.Transaction.IsCoinBase
+            Assert.False(isSuccess, "Coinbase should not be accepted to mempool.");
+            Assert.Equal(MempoolErrors.Coinbase, state.Error);
+        }
+
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsCoinbaseWithInvalidSize_ReturnsFalseAsync()
+        {
+            string dataDir = GetTestDirectoryPath(this);
+
+            var minerSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            ITestChainContext context = await TestChainFactory.CreateAsync(KnownNetworks.RegTest, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            var tx = new Transaction();
+
+            // Create a transaction that looks like a coinbase. But the consensus rules that apply to coinbases will reject it anyway.
+            // We need two forms of the test because submitting an incorrectly constructed coinbase triggers a consensus rule instead
+            // of the coinbase being rejected by the mempool for being a coinbase.
+            tx.AddInput(new TxIn(new OutPoint(new uint256(0), uint.MaxValue), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
+            tx.Sign(KnownNetworks.RegTest, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+
+            // Tests PreMempoolChecks invokes CheckPowTransactionRule and is enforced for mempool transactions.
+            Assert.False(isSuccess, "Coinbase with incorrect size should not be accepted to mempool.");
+        }
+
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsCoinstake_ReturnsFalseAsync()
+        {
+            string dataDir = GetTestDirectoryPath(this);
+
+            var minerSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            ITestChainContext context = await TestChainFactory.CreateAsync(KnownNetworks.RegTest, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
+            var tx = new Transaction();
+
+            // Create a transaction that looks like a coinstake.
+            tx.AddInput(new TxIn()
+            {
+                PrevOut = new OutPoint(new uint256(15), 1),
+                ScriptSig = new Script()
+            });
+            tx.AddOutput(new TxOut(Money.Zero, (IDestination)null));
+            tx.AddOutput(new TxOut(Money.Zero, (IDestination)null));
+
+            var state = new MempoolValidationState(false);
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+
+            // Tests PreMempoolChecks context.Transaction.IsCoinStake
+            Assert.False(isSuccess, "Coinstake should not be accepted to mempool.");
+            Assert.Equal(MempoolErrors.Coinstake, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
