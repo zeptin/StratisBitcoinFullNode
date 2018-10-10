@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using NBitcoin;
+using Stratis.Bitcoin.Features.MemoryPool.Interfaces;
 using Stratis.Bitcoin.Networks;
 using Stratis.Bitcoin.Tests.Common;
 using Xunit;
@@ -693,11 +694,36 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute failure case for CheckSigOps
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxFeeInvalidLessThanMin_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxFeeInvalidLessThanMin_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckFee
-            // - less than minimum fee
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // By using the entire UTXO value the fee will be zero.
+            tx.AddOutput(new TxOut(context.SrcTxs[0].Outputs[0].Value, destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Force a non-zero minimum fee, even though the mempool is empty and hasn't gathered fee data.
+            ITxMempool txMempool = (ITxMempool)validator.GetMemberValue("memPool");
+            txMempool.SetPrivateVariableValue<double>("rollingMinimumFeeRate", 10);
+
+            // Tests the less than minimum fee case in CheckFee
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with fee too low should not have been accepted.");
+            Assert.Equal(MempoolErrors.MinFeeNotMet, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
