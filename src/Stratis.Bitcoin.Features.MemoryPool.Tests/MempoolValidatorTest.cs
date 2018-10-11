@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using DBreeze.Utils;
 using NBitcoin;
 using Stratis.Bitcoin.Features.MemoryPool.Interfaces;
 using Stratis.Bitcoin.Networks;
@@ -594,11 +595,33 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.Equal(MempoolErrors.Dust, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsNonStandardOutputNotSingleReturn_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsNonStandardOutputNotSingleReturn_ReturnsFalseAsync()
         {
-            // TODO:Test the cases in PreMempoolChecks CheckStandardTransaction
-            // - Checkout output single return
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // Add two OP_RETURN (nulldata) outputs.
+            tx.AddOutput(new TxOut(Money.Zero, TxNullDataTemplate.Instance.GenerateScriptPubKey(new byte[] { 0, 0, 0 })));
+            tx.AddOutput(new TxOut(Money.Zero, TxNullDataTemplate.Instance.GenerateScriptPubKey(new byte[] { 1, 1, 1 })));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the multiple OP_RETURN output case in PreMempoolChecks CheckStandardTransaction
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with multiple OP_RETURN outputs should not have been accepted.");
+            Assert.Equal(MempoolErrors.MultiOpReturn, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
@@ -767,17 +790,16 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         {
             string dataDir = GetTestDirectoryPath(this);
 
-            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
             Network network = KnownNetworks.Main;
             var minerSecret = new BitcoinSecret(new Key(), network);
             ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
             IMempoolValidator validator = context.MempoolValidator;
             Assert.NotNull(validator);
 
-            var destSecret = new BitcoinSecret(new Key(), network);
             var tx = new Transaction();
             tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
-            tx.AddOutput(new TxOut(context.SrcTxs[0].Outputs[0].Value - Money.Cents(1), destSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(context.SrcTxs[0].Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
             tx.Sign(network, minerSecret, false);
 
             var state = new MempoolValidationState(false);
@@ -789,19 +811,16 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
 
                 var newTx = new Transaction();
                 newTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
-                newTx.AddOutput(new TxOut(tx.Outputs[0].Value - Money.Cents(1), destSecret.PubKeyHash));
+                newTx.AddOutput(new TxOut(tx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
                 newTx.Sign(network, minerSecret, false);
 
                 tx = newTx;
             }
 
-            // Tests the too many ancestors case in CheckAncestors
+            // Tests the too many ancestors failure case in CheckAncestors
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
             Assert.False(isSuccess, "Transaction with too many ancestors should not have been accepted.");
             Assert.Equal(MempoolErrors.TooLongMempoolChain, state.Error);
-
-            // TODO: Execute failure cases for CheckAncestors
-            // - Too many ancestors
         }
 
         [Fact]
