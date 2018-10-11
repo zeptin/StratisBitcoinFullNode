@@ -23,22 +23,108 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         {
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void CheckFinalTransaction_WithStandardLockTimeAndValidTxTime_ReturnsTrue()
+        [Fact]
+        public async void CheckFinalTransaction_WithStandardLockTimeAndValidTxTime_ReturnsTrueAsync()
         {
-            // TODO: Implement test
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            tx.Inputs.First().Sequence = new Sequence(Sequence.SEQUENCE_LOCKTIME_DISABLE_FLAG);
+
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            // Set the nLockTime to an arbitrary low block number so that the locktime has elapsed.
+            tx.LockTime = new LockTime(1);
+
+            // Set the transaction time to a recent value.
+            tx.Time = context.SrcTxs.Last().Time + 100;
+            throw new NotImplementedException();
+
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.True(isSuccess, "Transaction with nLockTime in the past and valid transaction time should have been accepted.");
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void CheckFinalTransaction_WithNoLockTimeAndValidTxTime_ReturnsTrue()
+        [Fact]
+        public async void CheckFinalTransaction_WithNoLockTimeAndValidTxTime_ReturnsTrueAsync()
         {
-            // TODO: Implement test
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            tx.Inputs.First().Sequence = new Sequence(Sequence.SEQUENCE_LOCKTIME_DISABLE_FLAG);
+
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            // Do not set an nLockTime for this test.
+
+            // Set the transaction time to a recent value.
+            tx.Time = context.SrcTxs.Last().Time + 100;
+            throw new NotImplementedException();
+
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.True(isSuccess, "Transaction with no nLockTime and a valid transaction time should have been accepted.");
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void CheckFinalTransaction_WithStandardLockTimeAndExpiredTxTime_Fails()
+        [Fact]
+        public async void CheckFinalTransaction_WithStandardLockTimeAndExpiredTxTime_FailsAsync()
         {
-            // TODO: Implement test
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            tx.Inputs.First().Sequence = new Sequence(Sequence.SEQUENCE_LOCKTIME_DISABLE_FLAG);
+
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            // Set the nLockTime to an arbitrary low block number so that the locktime has elapsed.
+            tx.LockTime = new LockTime(1);
+
+            // Set the transaction time to an old value.
+            tx.Time = context.SrcTxs.First().Time - 100;
+            throw new NotImplementedException();
+
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with nLockTime in the past and valid transaction time should have been accepted.");
         }
 
         [Fact(Skip = "Not implemented yet.")]
