@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using DBreeze.Utils;
 using NBitcoin;
+using NBitcoin.OpenAsset;
 using Stratis.Bitcoin.Features.MemoryPool.Interfaces;
 using Stratis.Bitcoin.Networks;
 using Stratis.Bitcoin.Tests.Common;
@@ -541,11 +542,36 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.Equal(MempoolErrors.Version, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsNonStandardTransactionSizeInvalid_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsNonStandardTransactionSizeInvalid_ReturnsFalseAsync()
         {
-            // TODO:Test the cases in PreMempoolChecks CheckStandardTransaction
-            // - Check transaction size
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            
+            // Add outputs until transaction is large enough to fail standardness checks.
+            while (MempoolValidator.GetTransactionWeight(tx, network.Consensus.Options) < this.Network.Consensus.Options.MaxStandardTxWeight)
+            {
+                tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            }
+
+            // It is not necessary to sign the transaction as we are testing a standardness
+            // requirement which is evaluated before signatures in the mempool.
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the transaction size standardness check in PreMempoolChecks CheckStandardTransaction
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction that is too large should not have been accepted.");
+            Assert.Equal(MempoolErrors.TxSize, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
