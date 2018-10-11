@@ -662,12 +662,22 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
             IMempoolValidator validator = context.MempoolValidator;
             Assert.NotNull(validator);
-
+            
             var destSecret = new BitcoinSecret(new Key(), network);
             var tx = new Transaction();
             tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // This is somewhat counterintuitive, but the nSequence of at least one input must
+            // not be equal to SEQUENCE_FINAL in order for nLockTime functionality to be active.
+            // SEQUENCE_LOCKTIME_DISABLE_FLAG disables the relative locktime.
+            // See BIP68: https://github.com/bitcoin/bips/blob/master/bip-0068.mediawiki
+            tx.Inputs.First().Sequence = new Sequence(Sequence.SEQUENCE_LOCKTIME_DISABLE_FLAG);
+
             tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            // Set the nLockTime to an arbitrary high block number to trigger the rejection logic.
             tx.LockTime = new LockTime(5000);
+
             tx.Sign(network, minerSecret, false);
 
             var state = new MempoolValidationState(false);
@@ -741,10 +751,40 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute this case CheckMempoolCoinView !context.View.HaveInputs(context.Transaction)
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_NonBIP68CanMine_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_NonBIP68CanMine_ReturnsFalseAsync()
         {
-            // TODO: Execute this case CreateMempoolEntry !CheckSequenceLocks(this.chain.Tip, context, PowCoinViewRule.StandardLocktimeVerifyFlags, context.LockPoints)
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+
+            // Need version >= 2 for BIP68 to be enforced.
+            tx.Version = 2;
+
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            // Per BIP68 the nSequence value of an input can be used to restrict its spendability
+            // prior to a certain timestamp or block height. Here we set it to an arbitrary high
+            // value to trigger a BIP68 check failure.
+            tx.Inputs.First().Sequence = new Sequence(5000);
+            //tx.LockTime = new LockTime(0);
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the non-final BIP68 transaction case in CreateMempoolEntry CheckSequenceLocks
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with nSequence relative lock time further than next block should not have been accepted.");
+            Assert.Equal(MempoolErrors.NonBIP68Final, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
