@@ -575,11 +575,42 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.Equal(MempoolErrors.TxSize, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxIsNonStandardInputScriptSigsLengthInvalid_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxIsNonStandardInputScriptSigsLengthInvalid_ReturnsFalseAsync()
         {
-            // TODO:Test the cases in PreMempoolChecks CheckStandardTransaction
-            // - Check input scriptsig lengths
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+
+            Op checkSigOp = new Op() { Code = OpcodeType.OP_CHECKSIG };
+
+            List<Op> sigOps = new List<Op>();
+
+            // A scriptSig should not be longer than 10 000 bytes.
+            for (int i = 0; i < 10100; i++)
+            {
+                sigOps.Add(checkSigOp);
+            }
+
+            var script = new Script(sigOps);
+
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), script));
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the oversize scriptSig case in PreMempoolChecks CheckStandardTransaction
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with an oversize scriptSig should not have been accepted.");
+            Assert.Equal(MempoolErrors.ScriptsigSize, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]
@@ -828,8 +859,6 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), script));
             tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
             
-            //tx.Sign(network, minerSecret, false);
-
             var state = new MempoolValidationState(false);
 
             // Tests the failure case (too many sigops) in CheckSigOps
