@@ -458,7 +458,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool
                 this.CheckRateLimit(context, state.LimitFree);
 
                 this.CheckAncestors(context);
-                this.CheckReplacment(context);
+                this.CheckReplacement(context);
                 this.CheckAllInputs(context);
 
                 // Remove conflicting transactions from the mempool
@@ -838,7 +838,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool
         /// The new transaction must have sufficient fees to pay for it's bandwidth.
         /// </summary>
         /// <param name="context">Current validation context.</param>
-        private void CheckReplacment(MempoolValidationContext context)
+        private void CheckReplacement(MempoolValidationContext context)
         {
             // Check if it's economically rational to mine this transaction rather
             // than the ones it replaces.
