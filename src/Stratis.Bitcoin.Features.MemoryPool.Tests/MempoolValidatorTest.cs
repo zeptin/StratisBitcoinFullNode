@@ -1043,14 +1043,38 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute failure case for CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs BadTransactionInputValueOutOfRange
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxPowConsensusCheckInputBadTransactionInBelowOut_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxPowConsensusCheckInputBadTransactionInBelowOut_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs BadTransactionInBelowOut
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // Want output value > inputs.
+            // There are actually two separate consensus errors that can occur, but the order they are checked means that only one should ever be seen.
+            // The errors are: ConsensusErrors.BadTransactionInBelowOut and ConsensusErrors.BadTransactionNegativeFee
+            tx.AddOutput(new TxOut(context.SrcTxs[0].Outputs.First().Value + Money.Coins(1), destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the in below out case in CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs BadTransactionInBelowOut
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with Vout money > Vin money should not have been accepted.");
+            Assert.Equal("bad-txns-in-belowout", state.Error.ConsensusError.Code);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxPowConsensusCheckInputNegativeFee_ReturnsFalse()
+        [Fact(Skip="Not clear how to test this without triggering In Below Out check instead.")]
+        public async void AcceptToMemoryPool_TxPowConsensusCheckInputNegativeFee_ReturnsFalseAsync()
         {
             // TODO: Execute failure case for CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs NegativeFee
         }
