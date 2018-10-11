@@ -666,8 +666,8 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             var destSecret = new BitcoinSecret(new Key(), network);
             var tx = new Transaction();
             tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
-            tx.AddOutput(new TxOut(new Money(Money.Satoshis(1)), destSecret.PubKeyHash));
-            tx.LockTime = new LockTime(new DateTimeOffset(DateTime.Now, TimeSpan.FromHours(1)));
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+            tx.LockTime = new LockTime(5000);
             tx.Sign(network, minerSecret, false);
 
             var state = new MempoolValidationState(false);
@@ -786,7 +786,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             var script = new Script(sigOps);
 
             tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), script));
-            tx.AddOutput(new TxOut(new Money(Money.Satoshis(1)), destSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
             
             //tx.Sign(network, minerSecret, false);
 
@@ -1016,10 +1016,33 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute failure case for CheckAllInputs CheckInputs ctx.VerifyScript for ScriptVerify.P2SH
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_MemPoolFull_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_MemPoolFull_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for this check after trimming mempool !this.memPool.Exists(context.TransactionHash)
+            string dataDir = GetTestDirectoryPath(this);
+
+            Network network = KnownNetworks.Main;
+
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.CENT * 11), destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            MempoolSettings memPoolSettings = (MempoolSettings)validator.GetMemberValue("mempoolSettings");
+            memPoolSettings.MaxMempool = 0;
+
+            // Test failure case for mempool size limit after pool is trimmed by LimitMempoolSize
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction should not have been accepted when mempool is full.");
+            Assert.Equal(MempoolErrors.Full, state.Error);
         }
     }
 }
