@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using DBreeze.Utils;
 using NBitcoin;
+using NBitcoin.BouncyCastle.Math;
+using NBitcoin.Crypto;
 using NBitcoin.OpenAsset;
 using Stratis.Bitcoin.Features.MemoryPool.Interfaces;
 using Stratis.Bitcoin.Networks;
@@ -765,7 +767,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         {
             string dataDir = GetTestDirectoryPath(this);
 
-            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
             Network network = KnownNetworks.Main;
             var minerSecret = new BitcoinSecret(new Key(), network);
             ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
@@ -791,7 +793,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         {
             string dataDir = GetTestDirectoryPath(this);
 
-            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
             Network network = KnownNetworks.Main;
             var minerSecret = new BitcoinSecret(new Key(), network);
             ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
@@ -820,7 +822,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         {
             string dataDir = GetTestDirectoryPath(this);
 
-            // Have to be on mainnet for this or the RequireStandard flag is not set in the mempool settings.
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
             Network network = KnownNetworks.Main;
             var minerSecret = new BitcoinSecret(new Key(), network);
             ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
@@ -878,10 +880,39 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.Equal(MempoolErrors.InPool, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxAlreadyHaveCoins_ReturnsFalse()
+        [Fact(Skip = "It is not possible for this test case to separately test the AlreadyKnown error condition, as the equivalent InPool check precedes it in the validator.")]
+        public async void AcceptToMemoryPool_TxAlreadyHaveCoins_ReturnsFalseAsync()
         {
-            // TODO: Execute this case CheckMempoolCoinView context.View.HaveCoins(context.TransactionHash)
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // By using the entire UTXO value the fee will be zero.
+            tx.AddOutput(new TxOut(context.SrcTxs[0].Outputs[0].Value, destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Create dummy entry for the mempool.
+            var entry = new TxMempoolEntry(tx, Money.Coins(1), 1, 0, 1, Money.Coins(1), true, 0, null, network.Consensus.Options);
+
+            // Force the transaction into the TxMempool.
+            ITxMempool txMempool = (ITxMempool)validator.GetMemberValue("memPool");
+            txMempool.AddUnchecked(tx.GetHash(), entry);
+            
+            // Tests the case CheckMempoolCoinView context.View.HaveCoins(context.TransactionHash)
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction already in mempool should not have been accepted.");
+            Assert.Equal(MempoolErrors.AlreadyKnown, state.Error);
         }
 
         [Fact]
@@ -909,10 +940,32 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Assert.False(isSuccess, "Transaction with invalid input should not have been accepted.");
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxInputsAreBad_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxInputsAreBad_ReturnsFalseAsync()
         {
-            // TODO: Execute this case CheckMempoolCoinView !context.View.HaveInputs(context.Transaction)
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+
+            // Need to use a non-mempool input otherwise it triggers the CheckConflicts logic instead.
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].Inputs.First().PrevOut.Hash, 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(Money.Coins(1), destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the inputs already spent case, CheckMempoolCoinView !context.View.HaveInputs(context.Transaction)
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with an input already spent should not have been accepted.");
+            Assert.Equal(MempoolErrors.BadInputsSpent, state.Error);
         }
 
         [Fact]
@@ -1056,10 +1109,6 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
 
             MempoolSettings memPoolSettings = (MempoolSettings)validator.GetMemberValue("mempoolSettings");
             memPoolSettings.RelayPriority = true;
-
-            // Force a non-zero minimum fee, even though the mempool is empty and hasn't gathered fee data.
-            //ITxMempool txMempool = (ITxMempool)validator.GetMemberValue("memPool");
-            //txMempool.SetPrivateVariableValue<double>("rollingMinimumFeeRate", 10);
 
             // Tests the less than minimum fee case in CheckFee
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
@@ -1243,15 +1292,44 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute failure case for CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs NegativeFee
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxPowConsensusCheckInputFeeOutOfRange_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxPowConsensusCheckInputFeeOutOfRange_ReturnsFalseAsync()
         {
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(new Money(network.Consensus.MaxMoney - 1), destSecret.PubKeyHash));
+            tx.Sign(network, minerSecret, false);
+
+            // Idea: Force transaction with very large output into mempool. Then use it as an ancestor transaction
+            // to make a transaction with a very large fee.
+
+            throw new NotImplementedException();
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the dust output case in PreMempoolChecks CheckStandardTransaction
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction with fee out of range should not have been accepted.");
+            Assert.Equal("bad-txns-vout-toolarge", state.Error.ConsensusError.Code);
+
             // TODO: Execute failure case for CheckAllInputs CheckInputs PowCoinViewRule.CheckInputs FeeOutOfRange
         }
 
-        [Fact(Skip = "Not implemented yet.")]
+        [Fact(Skip = "The VerifyScriptConsensus code path referred to does not seem to exist.")]
         public void AcceptToMemoryPool_TxVerifyStandardScriptConsensusFailure_ReturnsFalse()
         {
+            // Only the CoinViewRule CheckInputs method is called from the mempoool validator's CheckInputs.
+            // CoinViewRule.CheckInputs does not deal with script validation.
             // TODO: Execute failure case for CheckAllInputs CheckInputs VerifyScriptConsensus for ScriptVerify.Standard
         }
 
@@ -1261,16 +1339,41 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             // TODO: Execute failure case for CheckAllInputs CheckInputs ctx.VerifyScript for ScriptVerify.Standard
         }
 
-        [Fact(Skip = "Not implemented yet.")]
+        [Fact(Skip = "The VerifyScriptConsensus code path referred to does not seem to exist.")]
         public void AcceptToMemoryPool_TxVerifyP2SHScriptConsensusFailure_ReturnsFalse()
         {
+            // Only the CoinViewRule CheckInputs method is called from the mempoool validator's CheckInputs.
+            // CoinViewRule.CheckInputs does not deal with script validation.
             // TODO: Execute failure case for CheckAllInputs CheckInputs VerifyScriptConsensus for ScriptVerify.P2SH
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxContextVerifyP2SHScriptFailure_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxContextVerifyP2SHScriptFailure_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckAllInputs CheckInputs ctx.VerifyScript for ScriptVerify.P2SH
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var destSecret = new BitcoinSecret(new Key(), network);
+            var tx = new Transaction();
+
+            // Do horrible and not really sensible things to the scriptSig.
+            // We do need this to nominally be a P2SH transaction to trigger the right kind of failure.
+            var sig = new ECDSASignature(BigInteger.Zero, BigInteger.Zero);
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToScriptHashTemplate.Instance.GenerateScriptSig(network, new[] { sig }, minerSecret.ScriptPubKey)));
+            tx.AddOutput(new TxOut(new Money(Money.Coins(1)), destSecret.PubKeyHash));
+
+            var state = new MempoolValidationState(false);
+
+            // Tests the verify P2SH output case in CheckAllInputs CheckInputs ctx.VerifyScript for ScriptVerify.P2SH
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
+            Assert.False(isSuccess, "Transaction that fails P2SH validation should not have been accepted.");
+            Assert.Equal(MempoolErrors.MandatoryScriptVerifyFlagFailed, state.Error);
         }
 
         [Fact]
