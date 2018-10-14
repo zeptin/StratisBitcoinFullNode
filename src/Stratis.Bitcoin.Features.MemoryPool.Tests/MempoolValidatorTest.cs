@@ -557,6 +557,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
 
             // Tests PreMempoolChecks invokes CheckPowTransactionRule and is enforced for mempool transactions.
             Assert.False(isSuccess, "Coinbase with incorrect size should not be accepted to mempool.");
+            Assert.Equal("bad-cb-length", state.Error.ConsensusError.Code);
         }
 
         [Fact]
@@ -962,10 +963,12 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
 
             var state = new MempoolValidationState(false);
 
-            // Tests the inputs already spent case, CheckMempoolCoinView !context.View.HaveInputs(context.Transaction)
+            // Tests the inputs missing case, CheckMempoolCoinView !context.View.HaveCoins(txin.PrevOut.Hash)
             bool isSuccess = await validator.AcceptToMemoryPool(state, tx);
-            Assert.False(isSuccess, "Transaction with an input already spent should not have been accepted.");
-            Assert.Equal(MempoolErrors.BadInputsSpent, state.Error);
+            Assert.False(isSuccess, "Transaction with an input missing should not have been accepted.");
+            Assert.True(state.MissingInputs);
+
+            // TODO: Also need test for !context.View.HaveInputs(context.Transaction) case. It is not immediately obvious how to trigger the one failure but not the other.
         }
 
         [Fact]
@@ -1189,9 +1192,6 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
         [Fact]
         public async void AcceptToMemoryPool_TxAncestorsConflictSpend_ReturnsFalseAsync()
         {
-            // TODO: Execute failure cases for CheckAncestors
-            // - conflicting spend transaction
-
             string dataDir = GetTestDirectoryPath(this);
 
             var miner = new BitcoinSecret(new Key(), KnownNetworks.RegTest);
@@ -1231,23 +1231,286 @@ namespace Stratis.Bitcoin.Features.MemoryPool.Tests
             Directory.Delete(dataDir, true);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxReplacementInsufficientFees_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxReplacementInsufficientFees_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckReplacement InsufficientFees
-            // - three separate logic checks inside CheckReplacement
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var tx = new Transaction();
+
+            // Put a regular valid transaction into the mempool.
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(Money.Coins(49), minerSecret.PubKeyHash));
+
+            // We need the sequence of all the transactions to be lower than (Sequence.Final - 1) to avoid triggering the conflict mempool error.
+            // Therefore just use 1 here and 2 for the actual replacing transaction.
+            tx.Inputs.First().Sequence = 1;
+
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx));
+
+            var tx2 = new Transaction();
+
+            // Put another valid transaction into the mempool.
+            tx2.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx2.AddOutput(new TxOut(Money.Coins(49), minerSecret.PubKeyHash));
+
+            tx2.Inputs.First().Sequence = 1;
+
+            tx2.Sign(network, minerSecret, false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx2));
+
+            var tx3 = new Transaction();
+
+            // This transaction has a higher fee, but refers to the (unconfirmed) output of the first transaction, which is still in the pool.
+            tx3.AddInput(new TxIn(new OutPoint(tx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            // It also has a conflict with the second transaction.
+            tx3.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // Ensure the replacement transaction has a lower fee than the transaction it is replacing.
+            tx3.AddOutput(new TxOut(Money.Coins(99), minerSecret.PubKeyHash));
+
+            tx3.Inputs.First().Sequence = tx.Inputs.First().Sequence + 1;
+
+            tx3.Sign(network, minerSecret, false);
+
+            // Tests the insufficient fee replacement failure case, CheckReplacement ReplacementAddsUnconfirmed InsufficientFees
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx3);
+            Assert.False(isSuccess, "Transaction attempting replacement, that refers to an unconfirmed input, should not have been accepted.");
+            Assert.Equal(MempoolErrors.InsufficientFee, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxReplacementTooManyReplacements_ReturnsFalse()
+        [Fact(Skip = "This may need to be converted to an integration test as it seems to require mining to get it to work properly.")]
+        public async void AcceptToMemoryPool_TxReplacementTooManyReplacements_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckReplacement TooManyPotentialReplacements
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var state = new MempoolValidationState(false);
+
+            // General approach: try to make tx1 that splits some inputs into 5 outputs
+            // Then make 5 txes that split these outputs into a further 21 chained transactions each (avoid exceeding ancestor limit)
+            // Then make a replacement transaction that tries to spend the same inputs that all these >100 transactions depend on
+            
+            // WIP portion:
+            // -> It turns out this does not in fact work due to descendant transaction limits (25).
+            // Therefore the first transation splitting out to 5 outputs actually needs to get mined so it is no longer in the pool.
+            // Then each of the 5 outputs can be sent in a new transaction each and mined.
+            // Then the 5 separate transactions will each have <= 25 descendants and <= 25 ancestors.
+            // End WIP portion
+
+            var tx = new Transaction();
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            tx.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+            tx.Inputs.First().Sequence = 1;
+            tx.Sign(network, minerSecret, false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx));
+
+            // To trigger the conflict checks we need to have another transaction available that we spend an output from.
+            var tx2 = new Transaction();
+            tx2.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx2.AddOutput(new TxOut(Money.Coins(49), minerSecret.PubKeyHash));
+            tx2.Inputs.First().Sequence = 1;
+            tx2.Sign(network, minerSecret, false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx2));
+
+            // Chain together a sufficient number of dependent transactions for each of the 5 initial outputs without triggering the ancestor limit.
+            Transaction tempTx = null;
+
+            tempTx = new Transaction();
+            tempTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tempTx.AddOutput(new TxOut(tx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+            tempTx.Inputs.First().Sequence = 1;
+            tempTx.Sign(network, minerSecret, false);
+
+            for (int i = 0; i < (MempoolValidator.DefaultAncestorLimit - 3); i++)
+            {
+                await validator.AcceptToMemoryPool(state, tempTx);
+
+                var newTx = new Transaction();
+                newTx.AddInput(new TxIn(new OutPoint(tempTx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+                newTx.AddOutput(new TxOut(tempTx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+                newTx.Inputs.First().Sequence = 1;
+                newTx.Sign(network, minerSecret, false);
+
+                tempTx = newTx;
+            }
+
+            tempTx = new Transaction();
+            tempTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 1), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tempTx.AddOutput(new TxOut(tx.Outputs[1].Value - Money.Cents(1), minerSecret.PubKeyHash));
+            tempTx.Inputs.First().Sequence = 1;
+            tempTx.Sign(network, minerSecret, false);
+
+            for (int i = 0; i < (MempoolValidator.DefaultAncestorLimit - 3); i++)
+            {
+                await validator.AcceptToMemoryPool(state, tempTx);
+
+                var newTx = new Transaction();
+                newTx.AddInput(new TxIn(new OutPoint(tempTx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+                newTx.AddOutput(new TxOut(tempTx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+                newTx.Inputs.First().Sequence = 1;
+                newTx.Sign(network, minerSecret, false);
+
+                tempTx = newTx;
+            }
+
+            tempTx = new Transaction();
+            tempTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 2), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tempTx.AddOutput(new TxOut(tx.Outputs[2].Value - Money.Cents(1), minerSecret.PubKeyHash));
+            tempTx.Inputs.First().Sequence = 1;
+            tempTx.Sign(network, minerSecret, false);
+
+            for (int i = 0; i < (MempoolValidator.DefaultAncestorLimit - 3); i++)
+            {
+                await validator.AcceptToMemoryPool(state, tempTx);
+
+                var newTx = new Transaction();
+                newTx.AddInput(new TxIn(new OutPoint(tempTx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+                newTx.AddOutput(new TxOut(tempTx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+                newTx.Inputs.First().Sequence = 1;
+                newTx.Sign(network, minerSecret, false);
+
+                tempTx = newTx;
+            }
+
+            tempTx = new Transaction();
+            tempTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 3), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tempTx.AddOutput(new TxOut(tx.Outputs[3].Value - Money.Cents(1), minerSecret.PubKeyHash));
+            tempTx.Inputs.First().Sequence = 1;
+            tempTx.Sign(network, minerSecret, false);
+
+            for (int i = 0; i < (MempoolValidator.DefaultAncestorLimit - 3); i++)
+            {
+                await validator.AcceptToMemoryPool(state, tempTx);
+
+                var newTx = new Transaction();
+                newTx.AddInput(new TxIn(new OutPoint(tempTx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+                newTx.AddOutput(new TxOut(tempTx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+                newTx.Inputs.First().Sequence = 1;
+                newTx.Sign(network, minerSecret, false);
+
+                tempTx = newTx;
+            }
+
+            tempTx = new Transaction();
+            tempTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 4), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tempTx.AddOutput(new TxOut(tx.Outputs[4].Value - Money.Cents(1), minerSecret.PubKeyHash));
+            tempTx.Inputs.First().Sequence = 1;
+            tempTx.Sign(network, minerSecret, false);
+
+            for (int i = 0; i < (MempoolValidator.DefaultAncestorLimit - 3); i++)
+            {
+                await validator.AcceptToMemoryPool(state, tempTx);
+
+                var newTx = new Transaction();
+                newTx.AddInput(new TxIn(new OutPoint(tempTx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+                newTx.AddOutput(new TxOut(tempTx.Outputs[0].Value - Money.Cents(1), minerSecret.PubKeyHash));
+                newTx.Inputs.First().Sequence = 1;
+                newTx.Sign(network, minerSecret, false);
+
+                tempTx = newTx;
+            }
+
+            // Now create a replacement transaction that uses the same inputs.
+            var finalTx = new Transaction();
+            finalTx.AddInput(new TxIn(new OutPoint(tx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            finalTx.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            finalTx.AddOutput(new TxOut(Money.Cents(20), minerSecret.PubKeyHash));
+            finalTx.AddOutput(new TxOut(Money.Cents(20), minerSecret.PubKeyHash));
+            finalTx.Inputs.First().Sequence = tx.Inputs.First().Sequence + 1;
+            finalTx.Sign(network, minerSecret, false);
+
+            // Tests the too many potential replacements failure case in CheckReplacement TooManyPotentialReplacements
+            bool isSuccess = await validator.AcceptToMemoryPool(state, finalTx);
+            Assert.False(isSuccess, "Transaction with too many potential replacements should not have been accepted.");
+            Assert.Equal(MempoolErrors.TooManyPotentialReplacements, state.Error);
         }
 
-        [Fact(Skip = "Not implemented yet.")]
-        public void AcceptToMemoryPool_TxReplacementAddsUnconfirmed_ReturnsFalse()
+        [Fact]
+        public async void AcceptToMemoryPool_TxReplacementAddsUnconfirmed_ReturnsFalseAsync()
         {
-            // TODO: Execute failure case for CheckReplacement ReplacementAddsUnconfirmed
+            string dataDir = GetTestDirectoryPath(this);
+
+            // Run mempool tests on mainnet so that RequireStandard flag is set in the mempool settings.
+            Network network = KnownNetworks.Main;
+            var minerSecret = new BitcoinSecret(new Key(), network);
+            ITestChainContext context = await TestChainFactory.CreateAsync(network, minerSecret.PubKey.Hash.ScriptPubKey, dataDir);
+            IMempoolValidator validator = context.MempoolValidator;
+            Assert.NotNull(validator);
+
+            var tx = new Transaction();
+
+            // Put a regular valid transaction into the mempool.
+            tx.AddInput(new TxIn(new OutPoint(context.SrcTxs[0].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx.AddOutput(new TxOut(Money.Coins(49), minerSecret.PubKeyHash));
+
+            // We need the sequence of all the transactions to be lower than (Sequence.Final - 1) to avoid triggering the conflict mempool error.
+            // Therefore just use 1 here and 2 for the actual replacing transaction.
+            tx.Inputs.First().Sequence = 1;
+
+            tx.Sign(network, minerSecret, false);
+
+            var state = new MempoolValidationState(false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx));
+
+            var tx2 = new Transaction();
+
+            // Put another valid transaction into the mempool.
+            tx2.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            tx2.AddOutput(new TxOut(Money.Coins(49), minerSecret.PubKeyHash));
+
+            tx2.Inputs.First().Sequence = 1;
+
+            tx2.Sign(network, minerSecret, false);
+
+            Assert.True(await validator.AcceptToMemoryPool(state, tx2));
+
+            // To trigger replacement the replacement transaction needs to have a higher fee than the transaction it is replacing.
+            // To trigger the specific fault for this test, the replacing transaction needs to refer to an unconfirmed input in the mempool.
+
+            var tx3 = new Transaction();
+
+            // This transaction has a higher fee, but refers to the (unconfirmed) output of the first transaction, which is still in the pool.
+            tx3.AddInput(new TxIn(new OutPoint(tx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+            // It also has a conflict with the second transaction.
+            tx3.AddInput(new TxIn(new OutPoint(context.SrcTxs[1].GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(minerSecret.PubKey)));
+
+            // The fee should be very much higher than the other transactions, as this transaction has effectively almost two entire block rewards as inputs.
+            tx3.AddOutput(new TxOut(Money.Coins(1), minerSecret.PubKeyHash));
+
+            tx3.Inputs.First().Sequence = tx.Inputs.First().Sequence + 1;
+
+            tx3.Sign(network, minerSecret, false);
+
+            // Tests the unconfirmed input replacement failure case, CheckReplacement ReplacementAddsUnconfirmed
+            bool isSuccess = await validator.AcceptToMemoryPool(state, tx3);
+            Assert.False(isSuccess, "Transaction attempting replacement, that refers to an unconfirmed input, should not have been accepted.");
+            Assert.Equal(MempoolErrors.ReplacementAddsUnconfirmed, state.Error);
         }
 
         [Fact(Skip = "Not implemented yet.")]

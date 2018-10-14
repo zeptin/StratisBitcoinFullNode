@@ -373,5 +373,49 @@ namespace Stratis.Bitcoin.IntegrationTests.Mempool
                 TestHelper.WaitLoop(() => stratisNode2.CreateRPCClient().GetRawMempool().Length == 0);
             }
         }
+
+        [Fact]
+        public void MempoolCanRecoverOnStartup()
+        {
+            using (NodeBuilder builder = NodeBuilder.Create(this))
+            {
+                long coinbaseMaturity = this.network.Consensus.CoinbaseMaturity;
+                this.network.Consensus.CoinbaseMaturity = 1;
+
+                CoreNode stratisNodeSync = builder.CreateStratisPowNode(this.network).NotInIBD().WithWallet();
+
+                builder.StartAll();
+
+                TestHelper.MineBlocks(stratisNodeSync, 5);
+
+                // Create a transaction and broadcast it so it appears in the mempool.
+                Block block = stratisNodeSync.FullNode.BlockStore().GetBlockAsync(stratisNodeSync.FullNode.Chain.GetBlock(1).HashBlock).Result;
+                Transaction prevTrx = block.Transactions.First();
+                var dest = new BitcoinSecret(new Key(), stratisNodeSync.FullNode.Network);
+
+                Transaction tx = stratisNodeSync.FullNode.Network.CreateTransaction();
+                tx.AddInput(new TxIn(new OutPoint(prevTrx.GetHash(), 0), PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(stratisNodeSync.MinerSecret.PubKey)));
+                tx.AddOutput(new TxOut("25", dest.PubKey.Hash));
+                tx.AddOutput(new TxOut("24", new Key().PubKey.Hash)); // 1 btc fee
+                tx.Sign(stratisNodeSync.FullNode.Network, stratisNodeSync.MinerSecret, false);
+
+                stratisNodeSync.Broadcast(tx);
+
+                TestHelper.WaitLoop(() => stratisNodeSync.CreateRPCClient().GetRawMempool().Length == 1);
+
+                // Stop the node, it is supposed to save the mempool contents.
+                stratisNodeSync.FullNode.Dispose();
+
+                CoreNode newNodeInstance = builder.CloneStratisNode(stratisNodeSync);
+
+                // Start the node, this should reload the mempool.
+                newNodeInstance.Start();
+
+                // Check that the mempool recovered with the test transaction in it.
+                TestHelper.WaitLoop(() => newNodeInstance.CreateRPCClient().GetRawMempool().Length == 1);
+
+                this.network.Consensus.CoinbaseMaturity = coinbaseMaturity;
+            }
+        }
     }
 }

@@ -840,6 +840,9 @@ namespace Stratis.Bitcoin.Features.MemoryPool
         /// <param name="context">Current validation context.</param>
         private void CheckReplacement(MempoolValidationContext context)
         {
+            // For more information refer to https://en.bitcoin.it/wiki/Transaction_replacement
+            // In particular the full-RBF portion.
+
             // Check if it's economically rational to mine this transaction rather
             // than the ones it replaces.
             context.ConflictingFees = 0;
@@ -968,7 +971,7 @@ namespace Stratis.Bitcoin.Features.MemoryPool
         /// Currently not implemented.
         /// </summary>
         /// <param name="context">Current validation context</param>
-        /// <param name="limitFree">Whether to limit free transactioins</param>
+        /// <param name="limitFree">Whether to limit free transactions</param>
         private void CheckRateLimit(MempoolValidationContext context, bool limitFree)
         {
             // TODO: sort this logic
