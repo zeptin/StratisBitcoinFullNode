@@ -317,20 +317,29 @@ namespace Stratis.Bitcoin.Features.Consensus
         {
             TxIn input = txTo.Inputs[txToInN];
 
-            if (input.PrevOut.N >= coin.Outputs.Length)
-                return false;
+            try
+            {
+                if (input.PrevOut.N >= coin.Outputs.Length)
+                    return false;
 
-            if (input.PrevOut.Hash != coin.TransactionId)
-                return false;
+                if (input.PrevOut.Hash != coin.TransactionId)
+                    return false;
 
-            TxOut output = coin.Outputs[input.PrevOut.N];
+                TxOut output = coin.Outputs[input.PrevOut.N];
 
-            var txData = new PrecomputedTransactionData(txTo);
-            var checker = new TransactionChecker(txTo, txToInN, output.Value, txData);
-            var ctx = new ScriptEvaluationContext(this.chain.Network) { ScriptVerify = flagScriptVerify };
+                var txData = new PrecomputedTransactionData(txTo);
+                var checker = new TransactionChecker(txTo, txToInN, output.Value, txData);
+                var ctx = new ScriptEvaluationContext(this.chain.Network) { ScriptVerify = flagScriptVerify };
 
-            bool res = ctx.VerifyScript(input.ScriptSig, output.ScriptPubKey, checker);
-            return res;
+                bool res = ctx.VerifyScript(input.ScriptSig, output.ScriptPubKey, checker);
+                return res;
+            }
+            catch
+            {
+                this.logger.LogTrace("Trx Id: {0}, index {1} => outpoint: {2} ", txTo.GetHash(), txToInN, input.PrevOut);
+                this.logger.LogTrace("unspent outputs: {0}", coin);
+                throw;
+            }
         }
 
         /// <inheritdoc />

@@ -538,7 +538,8 @@ namespace Stratis.Bitcoin.Features.Consensus.CoinViews
             foreach (uint256 transactionToRemove in rewindData.TransactionsToRemove)
             {
                 this.logger.LogTrace("Attempt to remove transaction with ID '{0}'.", transactionToRemove);
-                this.cachedUtxoItems.Remove(transactionToRemove);
+                bool removed = this.cachedUtxoItems.Remove(transactionToRemove);
+                this.logger.LogTrace("Transaction with ID '{0}' was{1} removed successfully.", transactionToRemove, removed ? null : " not");
             }
         }
 
