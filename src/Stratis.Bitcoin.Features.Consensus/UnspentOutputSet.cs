@@ -3,9 +3,11 @@ using System.Linq;
 using NBitcoin;
 using Stratis.Bitcoin.Features.Consensus.CoinViews;
 using Stratis.Bitcoin.Utilities;
+using TracerAttributes;
 
 namespace Stratis.Bitcoin.Features.Consensus
 {
+    [TraceOn(TraceTarget.Private)]
     public class UnspentOutputSet
     {
         private Dictionary<uint256, UnspentOutputs> unspents;

@@ -2,9 +2,11 @@
 using System.Text;
 using NBitcoin;
 using NBitcoin.BitcoinCore;
+using TracerAttributes;
 
 namespace Stratis.Bitcoin.Utilities
 {
+    [TraceOn(TraceTarget.Private)]
     public class UnspentOutputs : IBitcoinSerializable
     {
         public UnspentOutputs()
