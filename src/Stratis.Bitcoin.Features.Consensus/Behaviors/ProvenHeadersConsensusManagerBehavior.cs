@@ -112,19 +112,18 @@ namespace Stratis.Bitcoin.Features.Consensus.Behaviors
             var headers = new ProvenHeadersPayload();
             foreach (ChainedHeader header in this.chain.EnumerateToTip(fork).Skip(1))
             {
-                if (!(header.Header is ProvenBlockHeader provenBlockHeader))
+                if (!(header.Header is ProvenBlockHeader))
                 {
-                    this.logger.LogTrace("Invalid proven header, try loading it from the store.");
-                    provenBlockHeader = this.provenBlockHeaderStore.GetAsync(header.Height).GetAwaiter().GetResult();
-                    if (provenBlockHeader == null)
-                    {
-                        this.logger.LogTrace("(-)[INVALID_PROVEN_HEADER]:{header}", header);
-                        throw new ConsensusException("Proven header could not be found.");
-                    }
+                    this.logger.LogTrace("Proven header not set, creating a new one.");
+
+                    // This new proven header will find its way into the store as well regardless,
+                    // as long as it was added to the batch by the proven header consensus manager behaviour.
+                    ProvenBlockHeader newProvenHeader = ((PosConsensusFactory)this.network.Consensus.ConsensusFactory).CreateProvenBlockHeader((PosBlock)header.Block);
+                    header.SetHeader(newProvenHeader);
                 }
 
                 lastHeader = header;
-                headers.Headers.Add(provenBlockHeader);
+                headers.Headers.Add((ProvenBlockHeader)header.Header);
 
                 if ((header.HashBlock == getHeadersPayload.HashStop) || (headers.Headers.Count == MaxItemsPerHeadersMessage))
                     break;
