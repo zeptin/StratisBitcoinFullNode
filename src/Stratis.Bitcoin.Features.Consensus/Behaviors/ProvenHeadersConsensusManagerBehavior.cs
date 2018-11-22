@@ -112,18 +112,30 @@ namespace Stratis.Bitcoin.Features.Consensus.Behaviors
             var headers = new ProvenHeadersPayload();
             foreach (ChainedHeader header in this.chain.EnumerateToTip(fork).Skip(1))
             {
-                if (!(header.Header is ProvenBlockHeader))
+                if (!(header.Header is ProvenBlockHeader provenBlockHeader))
                 {
-                    this.logger.LogTrace("Proven header not set, creating a new one.");
+                    this.logger.LogTrace("Invalid proven header {1}, try loading it from the store.", header.Header.GetHash());
+                    provenBlockHeader = this.provenBlockHeaderStore.GetAsync(header.Height).GetAwaiter().GetResult();
+                }
+
+                if (provenBlockHeader == null)
+                {
+                    if (header.Block == null)
+                    {
+                        this.logger.LogTrace("(-)[INVALID_PROVEN_HEADER_BLOCK_NOT_FOUND]:{header}", header);
+                        throw new ConsensusException("Proven header could not be found, and no block was available.");
+                    }
+
+                    this.logger.LogTrace("Proven header not found in store, creating a new one.");
 
                     // This new proven header will find its way into the store as well regardless,
                     // as long as it was added to the batch by the proven header consensus manager behaviour.
-                    ProvenBlockHeader newProvenHeader = ((PosConsensusFactory)this.network.Consensus.ConsensusFactory).CreateProvenBlockHeader((PosBlock)header.Block);
-                    header.SetHeader(newProvenHeader);
+                    provenBlockHeader = ((PosConsensusFactory)this.network.Consensus.ConsensusFactory).CreateProvenBlockHeader((PosBlock)header.Block);
+                    header.SetHeader(provenBlockHeader);
                 }
 
                 lastHeader = header;
-                headers.Headers.Add((ProvenBlockHeader)header.Header);
+                headers.Headers.Add(provenBlockHeader);
 
                 if ((header.HashBlock == getHeadersPayload.HashStop) || (headers.Headers.Count == MaxItemsPerHeadersMessage))
                     break;
