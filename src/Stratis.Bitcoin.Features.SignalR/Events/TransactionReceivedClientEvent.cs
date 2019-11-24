@@ -1,4 +1,5 @@
 using System;
+using NBitcoin;
 using Stratis.Bitcoin.EventBus;
 using Stratis.Bitcoin.EventBus.CoreEvents;
 
@@ -18,16 +19,15 @@ namespace Stratis.Bitcoin.Features.SignalR.Events
 
         public void BuildFrom(EventBase @event)
         {
-            if (@event is TransactionReceived transactionReceived)
-            {
-                this.TxHash = transactionReceived.ReceivedTransaction.GetHash().ToString();
-                this.IsCoinbase = transactionReceived.ReceivedTransaction.IsCoinBase;
-                this.IsCoinstake = transactionReceived.ReceivedTransaction.IsCoinStake;
-               // this.Time = transactionReceived.ReceivedTransaction.Time;
-                return;
-            }
+            if (!(@event is TransactionReceived transactionReceived))
+                throw new ArgumentException();
 
-            throw new ArgumentException();
+            this.TxHash = transactionReceived.ReceivedTransaction.GetHash().ToString();
+            this.IsCoinbase = transactionReceived.ReceivedTransaction.IsCoinBase;
+            this.IsCoinstake = transactionReceived.ReceivedTransaction.IsCoinStake;
+            
+            if (transactionReceived.ReceivedTransaction is IPosTransactionWithTime posTx)
+                this.Time = posTx.Time;
         }
     }
 }

@@ -18,10 +18,6 @@ namespace Stratis.Sidechains.Networks
         {
             Transaction genesisTransaction = consensusFactory.CreateTransaction();
 
-            // TODO: If the PoW/PoA networks do not use a PosConsensusFactory, their transactions will now be missing timestamps that were historically included for hashing.
-            if (genesisTransaction is IPosTransactionWithTime posTx)
-                posTx.Time = genesisTime;
-
             genesisTransaction.Version = 1;
             genesisTransaction.AddInput(new TxIn()
             {
